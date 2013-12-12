@@ -1,6 +1,6 @@
 {
   "name": "verstat",
-  "version": "3.7.4",
+  "version": "3.7.5",
   "bin": {
     "verstat": "./bin/verstat"
   },
@@ -16,7 +16,7 @@
     "commander": "~2.1.0",
     "rimraf": "~2.2.5",
     "express": "~3.4.6",
-    "livereload": "~0.3.2",
+    "livereload": "git://github.com/Se7enSky/node-livereload.git#master",
     "query-engine": "1.5.1"
   }
 }

@@ -59,7 +59,7 @@ program
 				"name": "my-verstat-project",
 				"version": "0.0.1",
 				"dependencies": {
-					"verstat": "~3.7.4"
+					"verstat": "~3.7.5"
 				}
 			}
 		""", encoding: "utf8"
