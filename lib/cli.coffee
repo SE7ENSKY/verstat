@@ -1,3 +1,4 @@
+
 reconfig = require './reconfig'
 Verstat = require './verstat'
 async = require 'async'
@@ -28,16 +29,20 @@ program
 	.option("-p, --port <port>", "specify http server port [8080]", 8080)
 
 program
-	.command("install <plugin>")
-	.description("install a plugin")
-	.action (plugin) ->
-		cmd "npm", [ "install", "--save", "verstat-plugin-#{plugin}" ]
+	.command("install")
+	.description("install plugins")
+	.action (plugins...) ->
+		program.args.pop()
+		args = [ "install", "--save" ].concat ("verstat-plugin-#{plugin}" for plugin in program.args)
+		cmd "npm", args
 
 program
-	.command("uninstall <plugin>")
-	.description("uninstall a plugin")
+	.command("uninstall")
+	.description("uninstall plugins")
 	.action (plugin) ->
-		cmd "npm", [ "uninstall", "--save", "verstat-plugin-#{plugin}" ]
+		program.args.pop()
+		args = [ "uninstall", "--save" ].concat ("verstat-plugin-#{plugin}" for plugin in program.args)
+		cmd "npm", args
 
 program
 	.command("update")
@@ -54,7 +59,7 @@ program
 				"name": "my-verstat-project",
 				"version": "0.0.1",
 				"dependencies": {
-					"verstat": "~3.7.3"
+					"verstat": "~3.7.4"
 				}
 			}
 		""", encoding: "utf8"
@@ -112,3 +117,4 @@ program
 			console.error err if err
 
 program.parse process.argv
+
