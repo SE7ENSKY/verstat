@@ -25,13 +25,28 @@ module.exports = class Verstat extends EventEmitter
 			templateData = _.extend templateData, _.omit file, ['source', 'processed', 'fn', 'dependencies', 'dependants', 'read', 'process', 'write']
 			templateData.env = @env
 			templateData.queryFiles = (q) =>
-				found = @files.findAll(q).toJSON()
+				found = @queryFiles q
 				@depends file, found if found
 				found
 			templateData.queryFile = (q) =>
-				found = @files.findOne(q).toJSON()
+				found = @queryFile q
 				@depends file, [ found ] if found
 				found
+
+	queryFile: (q) =>
+		found = @files.findOne(q)
+		if found
+			found = found.toJSON()
+			found
+		else
+			null
+	queryFiles: (q) =>
+		found = @files.findAll(q)
+		if found
+			found = found.toJSON()
+			found
+		else
+			null
 
 	modified: (file) ->
 		@files.remove(file.id).add(file)
@@ -222,6 +237,12 @@ module.exports = class Verstat extends EventEmitter
 			next err
 
 	splitSourceAndMeta: (file, data, next) ->
+		pushdata = (d) =>
+			if _.isArray d
+				_.extend file, items: d
+			else
+				_.extend file, d
+
 		@log "INFO", "splitSourceAndMeta", file.id, file.srcFilePath
 		switch file.srcExtname
 			when ".jade"
@@ -234,7 +255,7 @@ module.exports = class Verstat extends EventEmitter
 						lines.splice 0, 1
 					file.source = lines.join "\n"
 					try
-						_.extend file, YAML.parse metaString.replace ///\t///g, '  '
+						pushdata YAML.parse metaString.replace ///\t///g, '  '
 						next()
 					catch e
 						next e
@@ -244,14 +265,14 @@ module.exports = class Verstat extends EventEmitter
 			when ".json"
 				file.source = data
 				try
-					_.extend file, JSON.parse data
+					pushdata JSON.parse data
 					next()
 				catch e
 					next e
 			when ".yaml", ".yml"
 				file.source = data
 				try
-					_.extend file, YAML.parse data
+					pushdata YAML.parse data
 					next()
 				catch e
 					next e
@@ -267,7 +288,7 @@ module.exports = class Verstat extends EventEmitter
 
 					file.source = lines.join "\n"
 					try
-						_.extend file, YAML.parse metaString.replace ///\t///g, '  '
+						pushdata YAML.parse metaString.replace ///\t///g, '  '
 						next()
 					catch e
 						next e
@@ -323,10 +344,24 @@ module.exports = class Verstat extends EventEmitter
 			compilerOpts = {}
 			processor.compile file, compilerOpts, (err, output) =>
 				if err then next err else
-					file.processed = output
-					@modified file
-					@emit "processFile", file
-					next null, file
+					if file.layout
+						layoutFile = @files.findOne(fullname: file.layout).toJSON()
+						if layoutFile and layoutFile.fn
+							data = {}
+							@emit 'templateData', layoutFile, data
+							data.file = file
+							data.content = output
+							file.processed = layoutFile.fn data
+							@modified file
+							@emit "processFile", file
+							next null, file
+						else
+							next new Error "layout #{file.layout} not found"
+					else
+						file.processed = output
+						@modified file
+						@emit "processFile", file
+						next null, file
 		else
 			next null, file
 
