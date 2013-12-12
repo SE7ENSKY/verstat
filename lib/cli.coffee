@@ -51,10 +51,10 @@ program
 	.action ->
 		fs.writeFileSync "package.json", """
 			{
-				"name": "my verstat project",
+				"name": "my-verstat-project",
 				"version": "0.0.1",
 				"dependencies": {
-					"verstat": "~3.7.1"
+					"verstat": "~3.7.3"
 				}
 			}
 		""", encoding: "utf8"
