@@ -504,7 +504,8 @@ module.exports = class Verstat extends EventEmitter
 			@watch => @log "INFO", "watch started"
 		
 		http = require 'http'
-		http.createServer(app).listen app.get('port'), =>
+		server = http.createServer app
+		server.listen app.get('port'), =>
 			@log "INFO", "server started on port #{port}"
 			@emit "serve", app, server
 			next()
