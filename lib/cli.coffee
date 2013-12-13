@@ -4,6 +4,49 @@ Verstat = require './verstat'
 async = require 'async'
 fs = require 'fs'
 
+DEFAULT_CONFIG =
+	src: [
+		'src'
+	]
+	out: 'out'
+	plugins: [
+		'node_modules'
+		'plugins'
+	]
+	ignore: [
+		///\.DS_Store$///
+		///\.DS_Store$///
+		///\.hg*///
+		///\.git*///
+	]
+	noprocess: [
+		///\.verstat\.(coffee|js|yaml|yml|json)$///
+	]
+	nowrite: [
+		///\.verstat\.(coffee|js|yaml|yml|json)$///
+		///\.jade$///
+		///\.less$///
+		///\.styl$///
+		///\.coffee$///
+	]
+	nocopy: [
+		///\.verstat\.(coffee|js|yaml|yml|json)$///
+	]
+	rawExtnames: [
+		'.png'
+		'.jpg'
+		'.gif'
+		'.woff'
+		'.svg'
+		'.ttf'
+		'.eot'
+	]
+	processExtnames: [
+		'.css'
+		'.js'
+		'.html'
+	]
+
 cmd = (cmd, args, done) ->
 	require('child_process').spawn(cmd, args, stdio: 'inherit' ).on 'close', (code) ->
 		done? null, code
@@ -13,6 +56,7 @@ initVerstat = (env, next) ->
 	async.waterfall [
 		(cb) ->
 			reconfig
+				config: DEFAULT_CONFIG
 				root: process.cwd()
 				expectBasename: 'verstat'
 				next: cb
@@ -31,7 +75,7 @@ program
 program
 	.command("install")
 	.description("install plugins")
-	.action (plugins...) ->
+	.action ->
 		program.args.pop()
 		args = [ "install", "--save" ].concat ("verstat-plugin-#{plugin}" for plugin in program.args)
 		cmd "npm", args
@@ -39,7 +83,7 @@ program
 program
 	.command("uninstall")
 	.description("uninstall plugins")
-	.action (plugin) ->
+	.action ->
 		program.args.pop()
 		args = [ "uninstall", "--save" ].concat ("verstat-plugin-#{plugin}" for plugin in program.args)
 		cmd "npm", args
@@ -63,16 +107,6 @@ program
 				}
 			}
 		""", encoding: "utf8"
-		fs.writeFileSync ".verstat.yml", """
-			out: out
-			src:
-			 - src
-
-			plugins:
-			 - plugins
-			 - node_modules
-
-		""", encoding: "utf8"
 		fs.mkdirSync "src"
 		fs.writeFileSync "src/index.html", """
 			Hello world!
@@ -85,6 +119,16 @@ program
 		async.waterfall [
 			(cb) -> initVerstat "static", cb
 			(verstat, cb) -> verstat.generate cb
+		], (err) ->
+			console.error err if err
+
+program
+	.command("inspect")
+	.description("inspect files")
+	.action ->
+		async.waterfall [
+			(cb) -> initVerstat "static", cb
+			(verstat, cb) -> verstat.inspectFiles cb
 		], (err) ->
 			console.error err if err
 

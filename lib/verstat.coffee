@@ -30,7 +30,7 @@ module.exports = class Verstat extends EventEmitter
 				found
 			templateData.queryFile = (q) =>
 				found = @queryFile q
-				@depends file, [ found ] if found
+				@depends file, found if found
 				found
 
 	queryFile: (q) =>
@@ -66,12 +66,26 @@ module.exports = class Verstat extends EventEmitter
 			async.series [
 				(cb) => rimraf @config.out, cb
 				(cb) => @initPlugins cb
+				(cb) => @buildFiles cb
 				(cb) => @readFiles cb
+				(cb) => @preprocessFiles cb
 				(cb) => @processFiles cb
+				(cb) => @postprocessFiles cb
 				(cb) => @writeFiles cb
+				(cb) => @copyFiles cb
 			], next
 		else
 			next new Error "out must be configured"
+
+	inspectFiles: (next) ->
+		@log = -> # empty function
+		async.series [
+			(cb) => @initPlugins cb
+			(cb) => @buildFiles cb
+			(cb) =>
+				console.log require('util').inspect @files.toJSON(), colors: on
+				cb()
+		], next
 
 	setupWatchr: (next) ->
 		require('watchr').watch
@@ -168,32 +182,97 @@ module.exports = class Verstat extends EventEmitter
 	postprocessor: (name, postprocessorConfig) ->
 		@postprocessors[name] = postprocessorConfig
 
+
+	buildFiles: (next) ->
+		@log "INFO", "buildFiles", @config.src
+		allFiles = []
+		srcPathList = @config.src
+		srcPathList = [ srcPathList ] if not _.isArray srcPathList
+		async.each srcPathList, (srcPath, doneSrc) =>
+			@log "INFO", "buildFiles srcPath", srcPath
+			recursiveReaddir srcPath, (err, filePathList) =>
+				if err then doneSrc err else
+					allFiles = allFiles.concat filePathList
+					doneSrc()
+		, (err) =>
+			if err then next err else
+				allFiles = @filterIgnores allFiles
+				async.each allFiles, (filePath, doneFilePath) =>
+					@buildFile filePath, doneFilePath
+				, next
+
+	filterIgnores: (files) ->
+		@applyFilters files, @config.ignore
+
+	isNoProcess: (filePath) ->
+		@applyFilters([ filePath ], @config.noprocess).length is 0
+	isNoWrite: (filePath) ->
+		@applyFilters([ filePath ], @config.nowrite).length is 0
+	isNoCopy: (filePath) ->
+		@applyFilters([ filePath ], @config.nocopy).length is 0
+
+	applyFilters: (files, filters) ->
+		return files unless filters
+		filtered = files.slice()
+		for file in files
+			for filter in filters
+				if _.isString filter
+					filtered.splice filtered.indexOf(file), 1 if file is filter
+				else if _.isFunction filter
+					filtered.splice filtered.indexOf(file), 1 if filter file
+				else if _.isRegExp filter
+					filtered.splice filtered.indexOf(file), 1 if filter.test file
+		filtered
+
+	readFiles: (next) ->
+		@log "INFO", "readFiles"
+		async.each @files.findAll(read: on).toJSON(), (file, doneFile) =>
+			@readFile file, doneFile
+		, next
+
+	preprocessFiles: (next) ->
+		@log "INFO", "preprocessFiles"
+		async.each @files.toJSON(), (file, doneFile) =>
+			@preprocessFile file, doneFile
+		, next
+
+	processFiles: (next) ->
+		@log "INFO", "processFiles"
+		async.each @files.findAll(process: on, processor: { $ne: null }).toJSON(), (file, doneFile) =>
+			if @isNoProcess file.srcFilename then doneFile()
+			else @processFile file, doneFile
+		, next
+
+	postprocessFiles: (next) ->
+		@log "INFO", "postprocessFiles"
+		async.each @files.toJSON(), (file, doneFile) =>
+			@postprocessFile file, doneFile
+		, next
+
+	writeFiles: (next) ->
+		@log "INFO", "writeFiles"
+		async.each @files.findAll(write: on).toJSON(), (file, doneFile) =>
+			if @isNoWrite file.filename then doneFile()
+			else @writeFile file, doneFile
+		, next
+
+	copyFiles: (next) ->
+		@log "INFO", "copyFiles"
+		async.each @files.findAll(raw: yes).toJSON(), (file, doneFile) =>
+			if @isNoCopy file.filename then doneFile()
+			else @copyFile file, doneFile
+		, next
+
 	resolveProcessor: (srcFilename) ->
 		for name, processor of @processors
 			return name if processor.srcExtname and processor.srcExtname is path.extname srcFilename
 		return null
-
-	readFiles: (next) ->
-		@log "INFO", "readFiles", @config.src
-		async.each @config.src, (srcPath, doneSrc) =>
-			@log "INFO", "readFiles srcPath", srcPath
-			async.waterfall [
-				(cb) => recursiveReaddir srcPath, cb
-				(filePathList, cb) =>
-					async.each filePathList, (filePath, doneFilePath) =>
-						async.waterfall [
-							(builtFile) => @buildFile filePath, builtFile
-							(file, fileRead) =>
-								if file.read then @readFile file, fileRead else fileRead null, file
-							(file, preprocessedFile) => @preprocessFile file, preprocessedFile
-						], doneFilePath
-					, cb
-			], doneSrc
-		, next
-
 	resolveSrcPath: (filePath) ->
-		for srcPath in @config.src
-			return srcPath if filePath.indexOf srcPath is 0
+		if _.isArray @config.src
+			for srcPath in @config.src
+				return srcPath if filePath.indexOf(srcPath) is 0
+		else
+			return @config.src if filePath.indexOf(@config.src) is 0
 		return null
 
 	buildFile: (filePath, next) ->
@@ -214,8 +293,12 @@ module.exports = class Verstat extends EventEmitter
 			extname = path.extname filename
 			shortname = path.basename basename, extname
 
+			process = processor isnt null or extname in @config.processExtnames
+			raw = processor is null and extname in @config.rawExtnames
+			process = no if @isNoProcess srcFilename
+
 			@files.add file =
-				id: "c#{@nextFileId++}"
+				id: @nextFileId++
 				srcFilePath: filePath
 				srcFilename: srcFilename
 				srcExtname: path.extname srcFilename
@@ -226,9 +309,10 @@ module.exports = class Verstat extends EventEmitter
 				shortname: shortname
 				fullname: (if dir then dir + path.sep else '') + shortname
 				processor: processor
-				read: on
-				process: on
-				write: on
+				read: not raw
+				process: process
+				write: not raw
+				raw: raw
 				dependants: []
 				dependencies: []
 
@@ -323,53 +407,32 @@ module.exports = class Verstat extends EventEmitter
 		async.eachSeries postprocessors, (postprocessor, nextPostprocessor) =>
 			postprocessor.postprocess file, nextPostprocessor
 		, next
-
-	processFiles: (next) ->
-		@log "INFO", "processFiles"
-		async.series [
-			(processedFiles) =>
-				async.each @files.findAll(process: on).toJSON(), (file, doneFile) =>
-					@processFile file, doneFile
-				, processedFiles
-			(postprocessedFiles) =>
-				async.each @files.toJSON(), (file, doneFile) =>
-					@postprocessFile file, doneFile
-				, postprocessedFiles
-		], next
 	
 	processFile: (file, next) ->
 		@log "INFO", "processFile", file.srcFilePath, file.processor
-		if file.processor
-			processor = @processors[file.processor]
-			compilerOpts = {}
-			processor.compile file, compilerOpts, (err, output) =>
-				if err then next err else
-					if file.layout
-						layoutFile = @files.findOne(fullname: file.layout).toJSON()
-						if layoutFile and layoutFile.fn
-							data = {}
-							@emit 'templateData', layoutFile, data
-							data.file = file
-							data.content = output
-							file.processed = layoutFile.fn data
-							@modified file
-							@emit "processFile", file
-							next null, file
-						else
-							next new Error "layout #{file.layout} not found"
-					else
-						file.processed = output
-						@modified file
+		processor = @processors[file.processor]
+		compilerOpts = {}
+		processor.compile file, compilerOpts, (err, output) =>
+			if err then next err else
+				if file.layout
+					layoutFile = @files.findOne(fullname: file.layout).toJSON()
+					if layoutFile and layoutFile.fn
+						data = {}
+						@emit 'templateData', layoutFile, data
+						data.file = file
+						data.content = output
+						file.processed = layoutFile.fn data
+						@depends file, [ layoutFile ]
+						# @modified file # called by @depends
 						@emit "processFile", file
 						next null, file
-		else
-			next null, file
-
-	writeFiles: (next) ->
-		@log "INFO", "writeFiles"
-		async.each @files.findAll(write: on).toJSON(), (file, doneFile) =>
-			@writeFile file, doneFile
-		, next
+					else
+						next new Error "layout #{file.layout} not found"
+				else
+					file.processed = output
+					@modified file
+					@emit "processFile", file
+					next null, file
 
 	writeFile: (file, next) ->
 		@log "INFO", "writeFile", file.srcFilePath, file.filename
@@ -379,6 +442,24 @@ module.exports = class Verstat extends EventEmitter
 			else
 				data = if file.processor then file.processed else file.source
 				fs.writeFile "#{@config.out}/#{file.filename}", data, encoding: 'utf8', next
+
+	copyFile: (file, next) ->
+		@log "INFO", "copyFile", file.filename
+		mkdirp path.dirname("#{@config.out}/#{file.filename}"), (err) =>
+			return next err if err
+			cbCalled = no
+			onErr = (err) =>
+				@log "ERROR", "file copy error", err
+				unless cbCalled
+					cbCalled = yes
+					next err
+			rd = fs.createReadStream file.srcFilePath
+			rd.on "error", onErr
+			wr = fs.createWriteStream "#{@config.out}/#{file.filename}"
+			wr.on "error", onErr
+			wr.on "close", =>
+				next() unless cbCalled
+			rd.pipe wr
 
 	reworkFile: (file, next) ->
 		@log "INFO", "reworkFile", file.id, file.srcFilePath
@@ -404,6 +485,7 @@ module.exports = class Verstat extends EventEmitter
 			@files.remove file.id
 
 	depends: (file, dependencies) ->
+		dependencies = [ dependencies ] if not _.isArray dependencies
 		for dependency in dependencies
 			file.dependencies.push dependency.id if dependency.id not in file.dependencies
 			dependency.dependants.push file.id if file.id not in dependency.dependants
