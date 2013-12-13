@@ -502,17 +502,11 @@ module.exports = class Verstat extends EventEmitter
 		
 		if @env is 'dev'
 			@watch => @log "INFO", "watch started"
-			
-			livereload = require 'livereload'
-			livereload.createServer
-				exts: ['html', 'js', 'css', 'png', 'jpg', 'gif']
-				applyCSSLive: on
-				applyJSLive: off
-			.watch @config.out
 		
 		http = require 'http'
 		http.createServer(app).listen app.get('port'), =>
 			@log "INFO", "server started on port #{port}"
+			@emit "serve", app, server
 			next()
 
 		# console.log require('util').inspect @files.toJSON(), colors: on

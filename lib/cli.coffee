@@ -68,7 +68,7 @@ initVerstat = (env, next) ->
 program = require 'commander'
 
 program
-	.version("2.0.0")
+	.version("3.8.1")
 	.option("-e, --env <env>", "specify envinronment (dev|static) [dev]", "dev")
 	.option("-p, --port <port>", "specify http server port [8080]", 8080)
 
@@ -103,7 +103,7 @@ program
 				"name": "my-verstat-project",
 				"version": "0.0.1",
 				"dependencies": {
-					"verstat": "~3.7.5"
+					"verstat": "~3.8.1"
 				}
 			}
 		""", encoding: "utf8"
