@@ -441,7 +441,10 @@ module.exports = class Verstat extends EventEmitter
 				@log "ERROR", "error creating directories", err
 			else
 				data = if file.processor then file.processed else file.source
-				fs.writeFile "#{@config.out}/#{file.filename}", data, encoding: 'utf8', next
+				fs.writeFile "#{@config.out}/#{file.filename}", data, encoding: 'utf8', (err) =>
+					if err then next err else
+						@emit "writeFile", file
+						next()
 
 	copyFile: (file, next) ->
 		@log "INFO", "copyFile", file.filename
@@ -458,7 +461,9 @@ module.exports = class Verstat extends EventEmitter
 			wr = fs.createWriteStream "#{@config.out}/#{file.filename}"
 			wr.on "error", onErr
 			wr.on "close", =>
-				next() unless cbCalled
+				unless cbCalled
+					@emit "copyFile", file
+					next()
 			rd.pipe wr
 
 	reworkFile: (file, next) ->
@@ -469,6 +474,7 @@ module.exports = class Verstat extends EventEmitter
 			(cb) => if file.process and file.processor isnt null then @processFile file, cb else cb()
 			(cb) => @postprocessFile file, cb
 			(cb) => if file.write then @writeFile file, cb else cb()
+			(cb) => if file.raw then @copyFile file, cb else cb()
 		], next
 
 	reworkDependants: (file, next) ->
@@ -483,6 +489,7 @@ module.exports = class Verstat extends EventEmitter
 	removeFile: (file, next) ->
 		fs.unlink "#{@config.out}/#{file.filename}", (err) =>
 			@files.remove file.id
+			@emit "removeFile", file
 
 	depends: (file, dependencies) ->
 		dependencies = [ dependencies ] if not _.isArray dependencies
