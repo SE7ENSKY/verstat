@@ -466,7 +466,7 @@ module.exports = class Verstat extends EventEmitter
 		async.series [
 			(cb) => if file.read then @readFile file, cb else cb()
 			(cb) => @preprocessFile file, cb
-			(cb) => if file.process then @processFile file, cb else cb()
+			(cb) => if file.process and file.processor isnt null then @processFile file, cb else cb()
 			(cb) => @postprocessFile file, cb
 			(cb) => if file.write then @writeFile file, cb else cb()
 		], next
