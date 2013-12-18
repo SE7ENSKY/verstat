@@ -182,7 +182,6 @@ module.exports = class Verstat extends EventEmitter
 	postprocessor: (name, postprocessorConfig) ->
 		@postprocessors[name] = postprocessorConfig
 
-
 	buildFiles: (next) ->
 		@log "INFO", "buildFiles", @config.src
 		allFiles = []
