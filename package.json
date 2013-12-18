@@ -1,6 +1,6 @@
 {
   "name": "verstat",
-  "version": "3.8.6",
+  "version": "3.8.7",
   "bin": {
     "verstat": "./bin/verstat"
   },
