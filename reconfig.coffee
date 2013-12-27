@@ -1,4 +1,4 @@
-recursiveReaddir = require 'recursive-readdir'
+recursiveReaddir = require "./recursiveReaddir"
 path = require 'path'
 YAML = require 'yamljs'
 util = require 'util'
