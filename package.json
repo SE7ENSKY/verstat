@@ -1,20 +1,13 @@
 {
   "name": "verstat",
-  "version": "3.8.7",
-  "bin": {
-    "verstat": "./bin/verstat"
-  },
+  "version": "3.9.0",
+  "main": "verstat.coffee",
   "dependencies": {
-    "watchr": "~2.4.4",
-    "coffee-script": "~1.6.3",
     "yamljs": "~0.1.4",
     "mkdirp": "~0.3.5",
-    "loaddir": "~0.2.17",
-    "recursive-readdir": "0.0.2",
+    "rimraf": "~2.2.5",
     "async": "~0.2.9",
     "lodash": "~2.4.1",
-    "commander": "~2.1.0",
-    "rimraf": "~2.2.5",
     "express": "~3.4.6",
     "query-engine": "1.5.1"
   }

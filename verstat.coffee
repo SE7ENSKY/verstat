@@ -2,12 +2,13 @@ EventEmitter = require('events').EventEmitter
 fs = require "fs"
 path = require "path"
 mkdirp = require "mkdirp"
-recursiveReaddir = require "recursive-readdir"
 async = require "async"
 rimraf = require "rimraf"
 _ = require "lodash"
 YAML = require "yamljs"
 QueryEngine = require "query-engine"
+reconfig = require "./reconfig"
+recursiveReaddir = require "./recursiveReaddir"
 
 module.exports = class Verstat extends EventEmitter
 	constructor: (@env) ->
@@ -19,7 +20,7 @@ module.exports = class Verstat extends EventEmitter
 		@files = QueryEngine.createCollection []
 		@plugins = {}
 		@nextFileId = 1
-		@log "INFO", "instantiated verstat with env #{env}"
+		@log "DEBUG", "instantiated verstat with env #{@env}"
 
 		@on "templateData", (file, templateData) =>
 			templateData = _.extend templateData, _.omit file, ['source', 'processed', 'fn', 'dependencies', 'dependants', 'read', 'process', 'write']
@@ -32,6 +33,34 @@ module.exports = class Verstat extends EventEmitter
 				found = @queryFile q
 				@depends file, found if found
 				found
+
+	setEnv: (@env) ->
+		@log "DEBUG", "env set to #{@env}"
+
+	extendProgram: (program) ->
+		program
+			.command("generate")
+			.description("generate whole project to out dir with env=static")
+			.action =>
+				@setEnv "static"
+				async.series [
+					(cb) => @configure cb
+					(cb) => @generate cb
+				], (err) =>
+					@log "ERROR", err if err
+
+		program
+			.option("-p, --port <port>", "specify http server port [8080]", 8080)
+		program
+			.command("serve")
+			.description("generate website and serve it")
+			.action =>
+				async.series [
+					(cb) => @configure cb
+					(cb) => @generate cb
+					(cb) => @serve program.port, cb
+				], (err) =>
+					@log "ERROR", err if err
 
 	queryFile: (q) =>
 		found = @files.findOne(q)
@@ -58,8 +87,8 @@ module.exports = class Verstat extends EventEmitter
 				console.error level, objs...
 			when 'INFO'
 				console.log level, objs...
-			# when 'DEBUG', 'TRACE'
-			# 	console.log level, objs...
+			when 'DEBUG', 'TRACE'
+				console.log level, objs...
 
 	generate: (next) ->
 		if @config.out
@@ -67,96 +96,60 @@ module.exports = class Verstat extends EventEmitter
 				(cb) => rimraf @config.out, cb
 				(cb) => @initPlugins cb
 				(cb) => @buildFiles cb
-				(cb) => @readFiles cb
-				(cb) => @preprocessFiles cb
-				(cb) => @processFiles cb
-				(cb) => @postprocessFiles cb
-				(cb) => @writeFiles cb
-				(cb) => @copyFiles cb
+				(cb) => @regenerate null, cb
 			], next
 		else
 			next new Error "out must be configured"
 
-	inspectFiles: (next) ->
-		@log = -> # empty function
-		async.series [
-			(cb) => @initPlugins cb
-			(cb) => @buildFiles cb
-			(cb) =>
-				console.log require('util').inspect @files.toJSON(), colors: on
-				cb()
-		], next
+	regenerate: (fileIds, next) ->
+		if @config.out
+			async.series [
+				(cb) => @readFiles cb, fileIds
+				(cb) => @preprocessFiles cb, fileIds
+				(cb) => @processFiles cb, fileIds
+				(cb) => @postprocessFiles cb, fileIds
+				(cb) => @writeFiles cb, fileIds
+				(cb) => @copyFiles cb, fileIds
+			], next
+		else
+			next new Error "out must be configured"
 
-	setupWatchr: (next) ->
-		require('watchr').watch
-			paths: @config.src
-			# preferredMethods: ['watchFile', 'watch']
-			listeners:
-				log: (level, message) =>
-					@log level, message
-					if m = message.match ///^watch:\s*(.+)$///
-						@emit "watchr:started", m[1]
-				error: (err) =>
-					@log "ERROR", "watchr error", err
-				watching: (err, watcherInstance, isWatching) =>
-					if err
-						@log "ERROR", "watching failed", watcherInstance.path
-					else
-						@log "INFO", "watching started", watcherInstance.path
-				change: (changeType, filePath, fileCurrentStat, filePreviousStat) =>
-					@log "INFO", "watchr change", changeType, filePath
-					@emit "watchr:change", changeType, filePath, fileCurrentStat, filePreviousStat
-			next: (err, watchers) =>
-				if err then @log "ERROR", "watchr failed", err
-				else @log "INFO", "watchr ready"
-				next err
-		@on "watchr:change", (changeType, filePath) =>
-			switch changeType
-				when "create"
-					if not fs.statSync(filePath).isDirectory()
-						@buildFile filePath, (err, file) =>
-							@emit "watchEvent", changeType, file
-				when "update", "delete"
-					file = @files.findOne(srcFilePath: filePath).toJSON()
-					@emit "watchEvent", changeType, file
+	resolveAllDependants: (file) ->
+		result = file.dependants
+		dependants = @queryFiles id: $in: file.dependants
+		if dependants
+			for dependant in dependants
+				result = result.concat @resolveAllDependants dependant
+		result
 
-	watch: (next) ->
-		@on "watchEvent", (changeType, file) =>
-			switch changeType
-				when "create", "update"
-					async.series [
-						(done) => @reworkFile file, done
-						(done) => @reworkDependants file, done
-					], (err) =>
-						@log "ERROR", "error handling watchEvent", err if err
-				when "delete"
-					async.series [
-						(done) => @removeFile file, done
-						(done) => @reworkDependants file, done
-					], (err) =>
-						@log "ERROR", "error handling watchEvent", err if err
-
-		@setupWatchr next
+	configure: (next) ->
+		@log "DEBUG", "configure"
+		reconfig
+			config: require './defaults'
+			root: process.cwd()
+			expectBasename: 'verstat'
+			next: (err, config) =>
+				if err then next err
+				else @reconfig config, next
 
 	reconfig: (newConfig, next) ->
 		@config = newConfig
-		@log "INFO", "reconfig", newConfig
+		@log "DEBUG", "reconfig", newConfig
 		next()
 
 	initPlugins: (next) ->
 		@log "INFO", "initPlugins", @config.plugins
 		async.each @config.plugins, (pluginsPath, donePluginsPath) =>
-			@log "INFO", "initPlugins pluginsPath", pluginsPath
+			@log "DEBUG", "initPlugins pluginsPath", pluginsPath
 			fs.exists pluginsPath, (exists) =>
 				if exists
 					async.waterfall [
 						(cb) => recursiveReaddir pluginsPath, cb
 						(filePathList, cb) =>
+							filePathList = filePathList.filter (f) ->
+								f and f.match ///\.verstatplugin\.(coffee|js)///
 							async.each filePathList, (filePath, doneFilePath) =>
-								if filePath.match ///\.verstatplugin\.(coffee|js)///
-									@initPlugin path.resolve(filePath), doneFilePath
-								else
-									doneFilePath null
+								@initPlugin path.resolve(filePath), doneFilePath
 							, cb
 					], (err) =>
 						donePluginsPath err
@@ -165,7 +158,7 @@ module.exports = class Verstat extends EventEmitter
 		, next
 
 	initPlugin: (pluginPath, next) ->
-		@log "INFO", "initPlugin", pluginPath
+		@log "DEBUG", "initPlugin", pluginPath
 		try
 			plugin = require pluginPath
 			plugin.bind(@) (err, data) =>
@@ -188,7 +181,7 @@ module.exports = class Verstat extends EventEmitter
 		srcPathList = @config.src
 		srcPathList = [ srcPathList ] if not _.isArray srcPathList
 		async.each srcPathList, (srcPath, doneSrc) =>
-			@log "INFO", "buildFiles srcPath", srcPath
+			@log "DEBUG", "buildFiles srcPath", srcPath
 			recursiveReaddir srcPath, (err, filePathList) =>
 				if err then doneSrc err else
 					allFiles = allFiles.concat filePathList
@@ -223,41 +216,58 @@ module.exports = class Verstat extends EventEmitter
 					filtered.splice filtered.indexOf(file), 1 if filter.test file
 		filtered
 
-	readFiles: (next) ->
-		@log "INFO", "readFiles"
-		async.each @files.findAll(read: on).toJSON(), (file, doneFile) =>
+	readFiles: (next, fileIds) ->
+		@log "INFO", "readFiles", fileIds
+		filter =
+			read: on
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			@readFile file, doneFile
 		, next
 
-	preprocessFiles: (next) ->
-		@log "INFO", "preprocessFiles"
-		async.each @files.toJSON(), (file, doneFile) =>
+	preprocessFiles: (next, fileIds) ->
+		@log "INFO", "preprocessFiles", fileIds
+		filter = {}
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			@preprocessFile file, doneFile
 		, next
 
-	processFiles: (next) ->
-		@log "INFO", "processFiles"
-		async.each @files.findAll(process: on, processor: { $ne: null }).toJSON(), (file, doneFile) =>
+	processFiles: (next, fileIds) ->
+		@log "INFO", "processFiles", fileIds
+		filter =
+			process: on
+			processor: $ne: null
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			if @isNoProcess file.srcFilename then doneFile()
 			else @processFile file, doneFile
 		, next
 
-	postprocessFiles: (next) ->
-		@log "INFO", "postprocessFiles"
-		async.each @files.toJSON(), (file, doneFile) =>
+	postprocessFiles: (next, fileIds) ->
+		@log "INFO", "postprocessFiles", fileIds
+		filter = {}
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			@postprocessFile file, doneFile
 		, next
 
-	writeFiles: (next) ->
-		@log "INFO", "writeFiles"
-		async.each @files.findAll(write: on).toJSON(), (file, doneFile) =>
+	writeFiles: (next, fileIds) ->
+		@log "INFO", "writeFiles", fileIds
+		filter =
+			write: on
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			if @isNoWrite file.filename then doneFile()
 			else @writeFile file, doneFile
 		, next
 
-	copyFiles: (next) ->
-		@log "INFO", "copyFiles"
-		async.each @files.findAll(raw: yes).toJSON(), (file, doneFile) =>
+	copyFiles: (next, fileIds) ->
+		@log "INFO", "copyFiles", fileIds
+		filter =
+			raw: yes
+		filter.id = $in: fileIds if fileIds
+		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
 			if @isNoCopy file.filename then doneFile()
 			else @copyFile file, doneFile
 		, next
@@ -275,7 +285,7 @@ module.exports = class Verstat extends EventEmitter
 		return null
 
 	buildFile: (filePath, next) ->
-		@log "INFO", "buildFile", filePath
+		@log "DEBUG", "buildFile", filePath
 		try
 			srcPath = @resolveSrcPath filePath
 			srcFilename = path.relative srcPath, filePath
@@ -326,7 +336,7 @@ module.exports = class Verstat extends EventEmitter
 			else
 				_.extend file, d
 
-		@log "INFO", "splitSourceAndMeta", file.id, file.srcFilePath
+		@log "DEBUG", "splitSourceAndMeta", file.id, file.srcFilePath
 		switch file.srcExtname
 			when ".jade"
 				if data.match ///^//---\n///
@@ -338,7 +348,7 @@ module.exports = class Verstat extends EventEmitter
 						lines.splice 0, 1
 					file.source = lines.join "\n"
 					try
-						pushdata YAML.parse metaString.replace ///\t///g, '  '
+						pushdata YAML.parse metaString.replace ///\t///g, '	'
 						next()
 					catch e
 						next e
@@ -371,7 +381,7 @@ module.exports = class Verstat extends EventEmitter
 
 					file.source = lines.join "\n"
 					try
-						pushdata YAML.parse metaString.replace ///\t///g, '  '
+						pushdata YAML.parse metaString.replace ///\t///g, '	'
 						next()
 					catch e
 						next e
@@ -380,7 +390,7 @@ module.exports = class Verstat extends EventEmitter
 					next()
 
 	readFile: (file, next) ->
-		@log "INFO", "readFile", file.srcFilePath
+		@log "DEBUG", "readFile", file.srcFilePath
 		fs.readFile file.srcFilePath, encoding: 'utf8', (err, data) =>
 			if err then next err else
 				@splitSourceAndMeta file, data, (err) =>
@@ -408,7 +418,7 @@ module.exports = class Verstat extends EventEmitter
 		, next
 	
 	processFile: (file, next) ->
-		@log "INFO", "processFile", file.srcFilePath, file.processor
+		@log "DEBUG", "processFile", file.srcFilePath, file.processor
 		processor = @processors[file.processor]
 		compilerOpts = {}
 		processor.compile file, compilerOpts, (err, output) =>
@@ -434,7 +444,7 @@ module.exports = class Verstat extends EventEmitter
 					next null, file
 
 	writeFile: (file, next) ->
-		@log "INFO", "writeFile", file.srcFilePath, file.filename
+		@log "DEBUG", "writeFile", file.srcFilePath, file.filename
 		mkdirp path.dirname("#{@config.out}/#{file.filename}"), (err) =>
 			if err
 				@log "ERROR", "error creating directories", err
@@ -446,7 +456,7 @@ module.exports = class Verstat extends EventEmitter
 						next()
 
 	copyFile: (file, next) ->
-		@log "INFO", "copyFile", file.filename
+		@log "DEBUG", "copyFile", file.filename
 		mkdirp path.dirname("#{@config.out}/#{file.filename}"), (err) =>
 			return next err if err
 			cbCalled = no
@@ -465,30 +475,18 @@ module.exports = class Verstat extends EventEmitter
 					next()
 			rd.pipe wr
 
-	reworkFile: (file, next) ->
-		@log "INFO", "reworkFile", file.id, file.srcFilePath
-		async.series [
-			(cb) => if file.read then @readFile file, cb else cb()
-			(cb) => @preprocessFile file, cb
-			(cb) => if file.process and file.processor isnt null then @processFile file, cb else cb()
-			(cb) => @postprocessFile file, cb
-			(cb) => if file.write then @writeFile file, cb else cb()
-			(cb) => if file.raw then @copyFile file, cb else cb()
-		], next
-
-	reworkDependants: (file, next) ->
-		@log "INFO", "reworkDependants", file.id, file.srcFilePath, file.dependants
-		async.each file.dependants, (id, doneDependant) =>
-			dependantFile = @files.findOne(id: id).toJSON()
-			if dependantFile
-				@reworkFile dependantFile, doneDependant
-			else doneDependant()
-		, next
-
 	removeFile: (file, next) ->
-		fs.unlink "#{@config.out}/#{file.filename}", (err) =>
-			@files.remove file.id
-			@emit "removeFile", file
+		@log "DEBUG", "removeFile", file.filename
+		async.series [
+			(cb) =>
+				if file.raw or file.write
+					fs.unlink "#{@config.out}/#{file.filename}", cb
+				else cb()
+			(cb) =>
+				@files.remove file.id
+				@emit "removeFile", file
+				cb()
+		], next
 
 	depends: (file, dependencies) ->
 		dependencies = [ dependencies ] if not _.isArray dependencies
@@ -506,14 +504,9 @@ module.exports = class Verstat extends EventEmitter
 		app.use express.static @config.out
 		app.use express.errorHandler()
 		
-		if @env is 'dev'
-			@watch => @log "INFO", "watch started"
-		
 		http = require 'http'
 		server = http.createServer app
 		server.listen app.get('port'), =>
 			@log "INFO", "server started on port #{port}"
 			@emit "serve", app, server
 			next()
-
-		# console.log require('util').inspect @files.toJSON(), colors: on
