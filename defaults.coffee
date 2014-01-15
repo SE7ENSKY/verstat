@@ -24,6 +24,7 @@ module.exports =
 		///\.verstat\.(coffee|js|yaml|yml|json)$///
 	]
 	rawExtnames: [
+		'.ico'
 		'.png'
 		'.jpg'
 		'.gif'
