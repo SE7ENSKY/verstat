@@ -348,7 +348,7 @@ module.exports = class Verstat extends EventEmitter
 						lines.splice 0, 1
 					file.source = lines.join "\n"
 					try
-						pushdata YAML.parse metaString.replace ///\t///g, '	'
+						pushdata YAML.parse metaString.replace ///\t///g, '  '
 						next()
 					catch e
 						next e
@@ -365,7 +365,7 @@ module.exports = class Verstat extends EventEmitter
 			when ".yaml", ".yml"
 				file.source = data
 				try
-					pushdata YAML.parse data
+					pushdata YAML.parse data.replace ///\t///g, '  '
 					next()
 				catch e
 					next e
@@ -381,7 +381,7 @@ module.exports = class Verstat extends EventEmitter
 
 					file.source = lines.join "\n"
 					try
-						pushdata YAML.parse metaString.replace ///\t///g, '	'
+						pushdata YAML.parse metaString.replace ///\t///g, '  '
 						next()
 					catch e
 						next e
