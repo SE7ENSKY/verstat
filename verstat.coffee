@@ -10,6 +10,8 @@ QueryEngine = require "query-engine"
 reconfig = require "./reconfig"
 recursiveReaddir = require "./recursiveReaddir"
 
+FILE_THREADS = 4
+
 module.exports = class Verstat extends EventEmitter
 	constructor: (@env) ->
 		super
@@ -78,7 +80,8 @@ module.exports = class Verstat extends EventEmitter
 			null
 
 	modified: (file) ->
-		@files.remove(file.id).add(file)
+		@files.remove file.id
+		@files.add file
 
 	log: (level, objs...) ->
 		level = level.toUpperCase()
@@ -114,12 +117,13 @@ module.exports = class Verstat extends EventEmitter
 		else
 			next new Error "out must be configured"
 
-	resolveAllDependants: (file) ->
+	resolveAllDependants: (file, excludeIds = []) ->
 		result = file.dependants
-		dependants = @queryFiles id: $in: file.dependants
+		dependants = @queryFiles id: $in: _.without(file.dependants, excludeIds...)
+		excludeIds.push f.id for f in dependants
 		if dependants
 			for dependant in dependants
-				result = result.concat @resolveAllDependants dependant
+				result = result.concat @resolveAllDependants dependant, excludeIds
 		result
 
 	configure: (next) ->
@@ -221,7 +225,7 @@ module.exports = class Verstat extends EventEmitter
 		filter =
 			read: on
 		filter.id = $in: fileIds if fileIds
-		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
+		async.eachLimit @files.findAll(filter).toJSON(), FILE_THREADS, (file, doneFile) =>
 			@readFile file, doneFile
 		, next
 
@@ -257,7 +261,7 @@ module.exports = class Verstat extends EventEmitter
 		filter =
 			write: on
 		filter.id = $in: fileIds if fileIds
-		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
+		async.eachLimit @files.findAll(filter).toJSON(), FILE_THREADS, (file, doneFile) =>
 			if @isNoWrite file.filename then doneFile()
 			else @writeFile file, doneFile
 		, next
@@ -267,7 +271,7 @@ module.exports = class Verstat extends EventEmitter
 		filter =
 			raw: yes
 		filter.id = $in: fileIds if fileIds
-		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
+		async.eachLimit @files.findAll(filter).toJSON(), FILE_THREADS, (file, doneFile) =>
 			if @isNoCopy file.filename then doneFile()
 			else @copyFile file, doneFile
 		, next
