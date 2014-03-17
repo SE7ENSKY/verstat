@@ -305,6 +305,7 @@ module.exports = class Verstat extends EventEmitter
 			basename = path.basename filename
 			extname = path.extname filename
 			shortname = path.basename basename, extname
+			fullname = (if dir then dir + path.sep else '') + shortname
 
 			process = processor isnt null or extname in @config.processExtnames
 			raw = processor is null and extname in @config.rawExtnames
@@ -320,7 +321,8 @@ module.exports = class Verstat extends EventEmitter
 				basename: basename
 				extname: extname
 				shortname: shortname
-				fullname: (if dir then dir + path.sep else '') + shortname
+				fullname: fullname
+				url: '/' + fullname
 				processor: processor
 				read: not raw
 				process: process
