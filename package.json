@@ -1,6 +1,6 @@
 {
   "name": "verstat",
-  "version": "3.9.8",
+  "version": "3.9.9",
   "main": "verstat.coffee",
   "dependencies": {
     "yamljs": "~0.1.4",
