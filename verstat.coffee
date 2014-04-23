@@ -291,16 +291,20 @@ module.exports = class Verstat extends EventEmitter
 	buildFile: (filePath, next) ->
 		@log "DEBUG", "buildFile", filePath
 		try
+			winfix = (s) -> s.split('\\').join('/')
 			srcPath = @resolveSrcPath filePath
 			srcFilename = path.relative srcPath, filePath
+			srcFilename = winfix srcFilename
 			processor = @resolveProcessor srcFilename
 			dir = path.dirname srcFilename
 			dir = '' if dir is '.'
+			dir = winfix dir
 			filename = if processor
 				processorConfig = @processors[processor]
 				(if dir then dir + path.sep else '') + path.basename(srcFilename, processorConfig.srcExtname) + processorConfig.extname
 			else
 				srcFilename
+			filename = winfix filename
 
 			basename = path.basename filename
 			extname = path.extname filename
@@ -320,7 +324,7 @@ module.exports = class Verstat extends EventEmitter
 				basename: basename
 				extname: extname
 				shortname: shortname
-				fullname: (if dir then dir + path.sep else '') + shortname
+				fullname: (if dir then dir + '/' else '') + shortname
 				url: '/' + filename
 				processor: processor
 				read: not raw
