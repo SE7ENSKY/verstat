@@ -96,10 +96,16 @@ module.exports = class Verstat extends EventEmitter
 	generate: (next) ->
 		if @config.out
 			async.series [
+				(cb) =>
+					@emit "beforeInitialGenerate"
+					cb()
 				(cb) => rimraf @config.out, cb
 				(cb) => @initPlugins cb
 				(cb) => @buildFiles cb
 				(cb) => @regenerate null, cb
+				(cb) =>
+					@emit "afterInitialGenerate"
+					cb()
 			], next
 		else
 			next new Error "out must be configured"
@@ -107,12 +113,18 @@ module.exports = class Verstat extends EventEmitter
 	regenerate: (fileIds, next) ->
 		if @config.out
 			async.series [
+				(cb) =>
+					@emit "beforeEachGenerate"
+					cb()
 				(cb) => @readFiles cb, fileIds
 				(cb) => @preprocessFiles cb, fileIds
 				(cb) => @processFiles cb, fileIds
 				(cb) => @postprocessFiles cb, fileIds
 				(cb) => @writeFiles cb, fileIds
 				(cb) => @copyFiles cb, fileIds
+				(cb) =>
+					@emit "afterEachGenerate"
+					cb()
 			], next
 		else
 			next new Error "out must be configured"
@@ -222,6 +234,7 @@ module.exports = class Verstat extends EventEmitter
 
 	readFiles: (next, fileIds) ->
 		@log "INFO", "readFiles", fileIds
+		@emit "beforeReadFiles"
 		filter =
 			read: on
 		filter.id = $in: fileIds if fileIds
@@ -231,6 +244,7 @@ module.exports = class Verstat extends EventEmitter
 
 	preprocessFiles: (next, fileIds) ->
 		@log "INFO", "preprocessFiles", fileIds
+		@emit "beforePreprocessFiles"
 		filter = {}
 		filter.id = $in: fileIds if fileIds
 		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
@@ -239,6 +253,7 @@ module.exports = class Verstat extends EventEmitter
 
 	processFiles: (next, fileIds) ->
 		@log "INFO", "processFiles", fileIds
+		@emit "beforeProcessFiles"
 		filter =
 			process: on
 			processor: $ne: null
@@ -250,6 +265,7 @@ module.exports = class Verstat extends EventEmitter
 
 	postprocessFiles: (next, fileIds) ->
 		@log "INFO", "postprocessFiles", fileIds
+		@emit "beforePostprocessFiles"
 		filter = {}
 		filter.id = $in: fileIds if fileIds
 		async.each @files.findAll(filter).toJSON(), (file, doneFile) =>
@@ -258,6 +274,7 @@ module.exports = class Verstat extends EventEmitter
 
 	writeFiles: (next, fileIds) ->
 		@log "INFO", "writeFiles", fileIds
+		@emit "beforeWriteFiles"
 		filter =
 			write: on
 		filter.id = $in: fileIds if fileIds
@@ -268,6 +285,7 @@ module.exports = class Verstat extends EventEmitter
 
 	copyFiles: (next, fileIds) ->
 		@log "INFO", "copyFiles", fileIds
+		@emit "beforeCopyFiles"
 		filter =
 			raw: yes
 		filter.id = $in: fileIds if fileIds
@@ -290,6 +308,7 @@ module.exports = class Verstat extends EventEmitter
 
 	buildFile: (filePath, next) ->
 		@log "DEBUG", "buildFile", filePath
+		@emit "beforeBuildFile", filePath
 		try
 			winfix = (s) -> s.split('\\').join('/')
 			srcPath = @resolveSrcPath filePath
@@ -334,6 +353,8 @@ module.exports = class Verstat extends EventEmitter
 				dependants: []
 				dependencies: []
 
+			@emit "afterBuildFile", file
+
 			next null, file
 		catch err
 			next err
@@ -346,6 +367,7 @@ module.exports = class Verstat extends EventEmitter
 				_.extend file, d
 
 		@log "DEBUG", "splitSourceAndMeta", file.id, file.srcFilePath
+		@emit "beforeSplitSourceAndMeta", file, data
 		switch file.srcExtname
 			when ".jade"
 				if data.match ///^//---\n///
@@ -400,15 +422,18 @@ module.exports = class Verstat extends EventEmitter
 
 	readFile: (file, next) ->
 		@log "DEBUG", "readFile", file.srcFilePath
+		@emit "beforeReadFile", file
 		fs.readFile file.srcFilePath, encoding: 'utf8', (err, data) =>
 			if err then next err else
 				@splitSourceAndMeta file, data, (err) =>
 					@modified file
 					if err then next err else
 						@emit "readFile", file
+						@emit "afterReadFile", file
 						next null, file
 
 	preprocessFile: (file, next) ->
+		@emit "beforePreprocessFile", file
 		preprocessors = _.filter @preprocessors, (c) ->
 			_.has(c, 'extname') and file.extname is c.extname or _.has(c, 'srcExtname') and file.srcExtname is c.srcExtname or not _.has(c, 'extname') and not _.has(c, 'srcExtname')
 		preprocessors = _.sortBy preprocessors, 'priority'
@@ -418,6 +443,7 @@ module.exports = class Verstat extends EventEmitter
 		, next
 
 	postprocessFile: (file, next) ->
+		@emit "beforePostprocessFile", file
 		postprocessors = _.sortBy _.filter @postprocessors, (c, name) ->
 			_.has(c, 'extname') and file.extname is c.extname or _.has(c, 'srcExtname') and file.srcExtname is c.srcExtname or not _.has(c, 'extname') and not _.has(c, 'srcExtname')
 		postprocessors = _.sortBy postprocessors, 'priority'
@@ -428,6 +454,7 @@ module.exports = class Verstat extends EventEmitter
 	
 	processFile: (file, next) ->
 		@log "DEBUG", "processFile", file.srcFilePath, file.processor
+		@emit "beforeProcessFile", file
 		processor = @processors[file.processor]
 		compilerOpts = {}
 		processor.compile file, compilerOpts, (err, output) =>
@@ -443,6 +470,7 @@ module.exports = class Verstat extends EventEmitter
 						@depends file, [ layoutFile ]
 						# @modified file # called by @depends
 						@emit "processFile", file
+						@emit "afterProcessFile", file
 						next null, file
 					else
 						next new Error "layout #{file.layout} not found"
@@ -450,10 +478,12 @@ module.exports = class Verstat extends EventEmitter
 					file.processed = output
 					@modified file
 					@emit "processFile", file
+					@emit "afterProcessFile", file
 					next null, file
 
 	writeFile: (file, next) ->
 		@log "DEBUG", "writeFile", file.srcFilePath, file.filename
+		@emit "beforeWriteFile", file
 		mkdirp path.dirname("#{@config.out}/#{file.filename}"), (err) =>
 			if err
 				@log "ERROR", "error creating directories", err
@@ -462,10 +492,12 @@ module.exports = class Verstat extends EventEmitter
 				fs.writeFile "#{@config.out}/#{file.filename}", data, encoding: 'utf8', (err) =>
 					if err then next err else
 						@emit "writeFile", file
+						@emit "afterWriteFile", file
 						next()
 
 	copyFile: (file, next) ->
 		@log "DEBUG", "copyFile", file.filename
+		@emit "beforeCopyFile", file
 		mkdirp path.dirname("#{@config.out}/#{file.filename}"), (err) =>
 			return next err if err
 			cbCalled = no
@@ -481,11 +513,13 @@ module.exports = class Verstat extends EventEmitter
 			wr.on "close", =>
 				unless cbCalled
 					@emit "copyFile", file
+					@emit "afterCopyFile", file
 					next()
 			rd.pipe wr
 
 	removeFile: (file, next) ->
 		@log "DEBUG", "removeFile", file.filename
+		@emit "beforeWriteFile", file
 		async.series [
 			(cb) =>
 				if file.raw or file.write
@@ -494,6 +528,7 @@ module.exports = class Verstat extends EventEmitter
 			(cb) =>
 				@files.remove file.id
 				@emit "removeFile", file
+				@emit "afterRemoveFile", file
 				cb()
 		], next
 
